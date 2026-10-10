@@ -26,6 +26,7 @@ class ArtifactRegistry:
         settings = get_settings()
         target_dir = artifacts_dir or settings.resolved_artifacts_dir()
         logger.info(f"Loading artifacts from directory: {target_dir}")
+        self.is_loaded = False
 
         try:
             # 1. Verify files exist
@@ -89,11 +90,11 @@ class ArtifactRegistry:
                 f"Self-check 2 failed: Excluded features present in metadata: {found_excluded}"
             )
 
-        # Check 3: Every categorical feature has an encoder
-        missing_encoders = [f for f in self.categorical_features if f not in self.encoders]
-        if missing_encoders:
+        # Check 3: All 18 encoder features appear in the metadata
+        unknown_encoders = [f for f in self.encoders if f not in self.feature_names]
+        if unknown_encoders:
             raise ValueError(
-                f"Self-check 3 failed: Missing encoders for categorical features: {missing_encoders}"
+                f"Self-check 3 failed: Encoders reference unknown features: {unknown_encoders}"
             )
         if len(self.encoders) != 18:
             raise ValueError(
@@ -105,17 +106,25 @@ class ArtifactRegistry:
         if cad_model is None:
             raise ValueError("Self-check 4 failed: CAD model is not registered")
 
+        booster = cad_model.get_booster() if hasattr(cad_model, "get_booster") else None
         model_feat_count = getattr(cad_model, "n_features_in_", None)
-        if model_feat_count is None and hasattr(cad_model, "get_booster"):
-            try:
-                booster = cad_model.get_booster()
-                model_feat_count = booster.num_features()
-            except Exception:
-                pass
+        if model_feat_count is None and booster is not None:
+            model_feat_count = booster.num_features()
 
         if model_feat_count is not None and model_feat_count != 52:
             raise ValueError(
                 f"Self-check 4 failed: Model expected feature count is {model_feat_count}, expected 52"
+            )
+
+        model_feature_names = getattr(cad_model, "feature_names_in_", None)
+        if model_feature_names is None and booster is not None:
+            model_feature_names = booster.feature_names
+        if (
+            model_feature_names is not None
+            and list(model_feature_names) != self.feature_names
+        ):
+            raise ValueError(
+                "Self-check 4 failed: Model feature names/order do not match metadata"
             )
 
         # Check 5: Target mapping and model.classes_ agree on CAD vs Normal

@@ -1,10 +1,15 @@
+# Web framework
 fastapi==0.115.6
-uvicorn==0.34.0
+uvicorn[standard]==0.34.0
+
+# Data validation — pydantic-core version is locked to pydantic's exact requirement
 pydantic==2.10.4
 pydantic-settings==2.7.0
 python-dotenv==1.0.1
+
+# ML & data processing
 numpy==2.1.3
 pandas==2.2.3
 xgboost==2.1.3
-joblib==1.4.2
 scikit-learn==1.6.1
+joblib==1.4.2

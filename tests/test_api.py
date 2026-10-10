@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.app.core.config import Settings
 from backend.app.main import app
 from backend.app.services.artifact_loader import get_artifact_registry
 
@@ -12,8 +15,8 @@ def ensure_artifacts_loaded():
     if not registry.is_loaded:
         registry.load()
 
-def get_valid_sample_features():
-    """Generates a valid set of all 52 features for sanity testing."""
+def get_synthetic_inference_features():
+    """Builds a synthetic API smoke-test input, not a patient or parity fixture."""
     registry = get_artifact_registry()
     sample = {}
     for feat in registry.feature_names:
@@ -21,21 +24,8 @@ def get_valid_sample_features():
             # Use the first valid categorical label
             sample[feat] = registry.encoders[feat].classes_[0]
         else:
-            # Provide standard default numeric float
+            # Zeroes are synthetic placeholders, not source-row values.
             sample[feat] = 0.0
-    # Set typical clinical values for key numerics
-    sample["Age"] = 58.0
-    sample["Weight"] = 72.0
-    sample["Length"] = 170.0
-    sample["BMI"] = 24.9
-    sample["BP"] = 120.0
-    sample["PR"] = 75.0
-    sample["FBS"] = 95.0
-    sample["CR"] = 0.9
-    sample["TG"] = 150.0
-    sample["LDL"] = 110.0
-    sample["HDL"] = 45.0
-    sample["EF-TTE"] = 55.0
     return sample
 
 # ==========================================
@@ -48,6 +38,18 @@ def test_health_endpoint():
     assert json_data["success"] is True
     assert json_data["data"]["status"] == "ok"
     assert json_data["data"]["model_loaded"] is True
+
+def test_liveness_endpoint():
+    response = client.get("/health/live")
+    assert response.status_code == 200
+    assert response.json()["data"] == {"status": "ok"}
+
+def test_artifact_path_is_resolved_from_project_root(monkeypatch, tmp_path):
+    settings = Settings(ARTIFACTS_DIR="backend/app/ml/artifacts")
+    monkeypatch.chdir(tmp_path)
+
+    expected_path = Path(__file__).resolve().parents[1] / "backend/app/ml/artifacts"
+    assert Path(settings.resolved_artifacts_dir()) == expected_path
 
 # ==========================================
 # 2. Model Info Endpoint Tests
@@ -92,7 +94,7 @@ def test_cors_preflight():
 # 4. Valid Predict Inference Tests
 # ==========================================
 def test_predict_success():
-    sample = get_valid_sample_features()
+    sample = get_synthetic_inference_features()
     response = client.post("/predict", json={"features": sample})
     assert response.status_code == 200
     json_data = response.json()
@@ -111,8 +113,7 @@ def test_predict_success():
 # 5. Validation Error Tests
 # ==========================================
 def test_predict_missing_features():
-    # Only provide 2 features
-    response = client.post("/predict", json={"features": {"Age": 60.0, "Sex": "Male"}})
+    response = client.post("/predict", json={"features": {}})
     assert response.status_code == 422
     json_data = response.json()
     assert json_data["success"] is False
@@ -120,10 +121,10 @@ def test_predict_missing_features():
     assert "missing_features" in json_data["error"]["fields"]
     # Check that missing features are listed
     missing = json_data["error"]["fields"]["missing_features"]
-    assert len(missing) == 50
+    assert len(missing) == 52
 
 def test_predict_prohibited_key_lad():
-    sample = get_valid_sample_features()
+    sample = get_synthetic_inference_features()
     sample["LAD"] = 1.0  # Prohibited key
     response = client.post("/predict", json={"features": sample})
     assert response.status_code == 422
@@ -133,7 +134,7 @@ def test_predict_prohibited_key_lad():
     assert "LAD" in json_data["error"]["fields"]
 
 def test_predict_prohibited_key_cath():
-    sample = get_valid_sample_features()
+    sample = get_synthetic_inference_features()
     sample["Cath"] = 0
     response = client.post("/predict", json={"features": sample})
     assert response.status_code == 422
@@ -143,7 +144,7 @@ def test_predict_prohibited_key_cath():
     assert "Cath" in json_data["error"]["fields"]
 
 def test_predict_unknown_key():
-    sample = get_valid_sample_features()
+    sample = get_synthetic_inference_features()
     sample["unknown_custom_field"] = "foo"
     response = client.post("/predict", json={"features": sample})
     assert response.status_code == 422
@@ -153,7 +154,7 @@ def test_predict_unknown_key():
     assert "unknown_custom_field" in json_data["error"]["fields"]
 
 def test_predict_invalid_categorical_value():
-    sample = get_valid_sample_features()
+    sample = get_synthetic_inference_features()
     sample["Sex"] = "UnknownGender"
     response = client.post("/predict", json={"features": sample})
     assert response.status_code == 422
@@ -164,7 +165,7 @@ def test_predict_invalid_categorical_value():
     assert "Allowed values" in json_data["error"]["fields"]["Sex"][0]
 
 def test_predict_invalid_numeric_nan():
-    sample = get_valid_sample_features()
+    sample = get_synthetic_inference_features()
     sample["Age"] = "NaN"  # String representation of NaN
     response = client.post("/predict", json={"features": sample})
     assert response.status_code == 422
@@ -174,7 +175,7 @@ def test_predict_invalid_numeric_nan():
     assert "Age" in json_data["error"]["fields"]
 
 def test_predict_invalid_numeric_boolean():
-    sample = get_valid_sample_features()
+    sample = get_synthetic_inference_features()
     sample["Age"] = True  # Boolean should be rejected in numeric field
     response = client.post("/predict", json={"features": sample})
     assert response.status_code == 422
@@ -184,7 +185,7 @@ def test_predict_invalid_numeric_boolean():
     assert "Age" in json_data["error"]["fields"]
 
 def test_predict_invalid_numeric_string():
-    sample = get_valid_sample_features()
+    sample = get_synthetic_inference_features()
     sample["Age"] = "not_a_number"
     response = client.post("/predict", json={"features": sample})
     assert response.status_code == 422
@@ -202,3 +203,15 @@ def test_predict_malformed_json():
     assert response.status_code in [400, 422]
     json_data = response.json()
     assert json_data["success"] is False
+
+def test_request_body_size_limit():
+    from backend.app.core.config import get_settings
+
+    limit = get_settings().MAX_REQUEST_SIZE_BYTES
+    response = client.post(
+        "/predict",
+        content=b"x" * (limit + 1),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "REQUEST_TOO_LARGE"

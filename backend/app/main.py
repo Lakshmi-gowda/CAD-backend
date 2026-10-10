@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.app.core.config import get_settings
+from backend.app.core.middleware import RequestSizeLimitMiddleware
 from backend.app.core.errors import (
     AppException,
     app_exception_handler,
@@ -52,6 +53,11 @@ def create_app() -> FastAPI:
         description="FastAPI service serving XGBoost model for Coronary Artery Disease prediction",
         version="1.0.0",
         lifespan=lifespan,
+    )
+
+    app.add_middleware(
+        RequestSizeLimitMiddleware,
+        max_request_size_bytes=settings.MAX_REQUEST_SIZE_BYTES,
     )
 
     # PRD Section 11: CORS Configuration

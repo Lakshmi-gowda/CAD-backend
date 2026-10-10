@@ -1,9 +1,13 @@
 from fastapi import APIRouter
 from backend.app.core.errors import ModelUnavailableError
-from backend.app.schemas.common import SuccessResponse, HealthData
+from backend.app.schemas.common import SuccessResponse, HealthData, LivenessData
 from backend.app.services.artifact_loader import get_artifact_registry
 
 router = APIRouter(tags=["Health"])
+
+@router.get("/health/live", response_model=SuccessResponse[LivenessData])
+def liveness_check():
+    return SuccessResponse(data=LivenessData(status="ok"))
 
 @router.get("/health", response_model=SuccessResponse[HealthData])
 def health_check():

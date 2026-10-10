@@ -42,8 +42,10 @@ CAD backend/
 ├── scripts/
 │   └── inspect_artifacts.py         # Verification and self-check inspection script
 ├── tests/
-│   └── test_api.py                  # Automated test suite (13 tests)
+│   └── test_api.py                  # Automated API test suite
 ├── requirements.txt
+├── requirements-dev.txt
+├── .python-version
 ├── vercel.json
 ├── .env.example
 └── .gitignore
@@ -57,7 +59,7 @@ CAD backend/
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 ### 2. Environment Setup
@@ -86,8 +88,11 @@ pytest tests/test_api.py -v
 
 ## API Endpoints
 
-### 1. `GET /health`
-Liveness and readiness check. Returns HTTP 503 if artifacts are unavailable.
+### 1. `GET /health/live`
+Confirms the API process is responding; this does not indicate whether the model is loaded.
+
+### 2. `GET /health`
+Model readiness check. Returns HTTP 503 if artifacts are unavailable.
 ```json
 {
   "success": true,
@@ -98,7 +103,7 @@ Liveness and readiness check. Returns HTTP 503 if artifacts are unavailable.
 }
 ```
 
-### 2. `GET /model-info`
+### 3. `GET /model-info`
 Provides model metadata and all 52 feature definitions for frontend form construction.
 ```json
 {
@@ -116,35 +121,14 @@ Provides model metadata and all 52 feature definitions for frontend form constru
 }
 ```
 
-### 3. `POST /predict`
+### 4. `POST /predict`
 Executes CAD inference on the 52 patient features.
 
-**Request:**
-```json
-{
-  "features": {
-    "Age": 58.0,
-    "Sex": "Male",
-    "...": "..."
-  }
-}
-```
-
-**Success Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": {
-    "prediction": "Normal",
-    "probabilities": {
-      "CAD": 0.2538,
-      "Normal": 0.7462
-    },
-    "model_version": "1.0.0",
-    "disclaimer": "For decision support and educational purposes only. Not a substitute for formal diagnostic imaging."
-  }
-}
-```
+The request must supply all 52 fields listed in [`docs/FEATURES.md`](docs/FEATURES.md).
+No patient example or expected probability is shown because a verified source row
+and its original training-notebook prediction are not present in this repository.
+The automated inference test uses synthetic values only as an API smoke test, not
+for clinical interpretation or prediction-parity validation.
 
 **Validation Error Response (422 Unprocessable Content):**
 ```json
@@ -175,3 +159,33 @@ Deploy directly with Vercel CLI:
 vercel --prod
 ```
 Ensure that `CORS_ORIGINS` is configured in your Vercel Project Settings to match your frontend URL.
+
+## Render Deployment
+
+The service runs from the repository root with the existing ASGI app at
+`backend.app.main:app`.
+
+- **Build Command:** `pip install --only-binary=:all: -r requirements.txt`
+- **Start Command:** `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`
+- **Python version:** `.python-version` pins the service to Python 3.12.7. If
+  configuring the runtime in Render instead, set `PYTHON_VERSION` to `3.12.7`.
+
+Set these environment variables in Render (no committed `.env` file is needed):
+
+| Variable | Value |
+| --- | --- |
+| `ENV` | `production` |
+| `LOG_LEVEL` | `INFO` |
+| `ARTIFACTS_DIR` | `backend/app/ml/artifacts` |
+| `MAX_REQUEST_SIZE_BYTES` | `1048576` |
+| `CORS_ORIGINS` | Your frontend origin(s), comma-separated; leave empty to disable cross-origin access until known |
+
+Render supplies `PORT` automatically. Use `/health/live` for process liveness
+and `/health` for model readiness. A successful server start alone does not
+mean the model artifacts loaded.
+
+No third-party API keys or API base-URL environment variables are required.
+After deployment, Render assigns the service URL; append `/health/live`,
+`/health`, `/model-info`, `/predict`, or `/docs` to that URL to reach the
+available endpoints. The `.env.example` file lists the application settings
+and endpoint URL patterns.

@@ -20,6 +20,9 @@ class HealthData(BaseModel):
     status: str = "ok"
     model_loaded: bool = True
 
+class LivenessData(BaseModel):
+    status: str = "ok"
+
 class FeatureInfo(BaseModel):
     name: str
     type: str  # "categorical" | "numeric"

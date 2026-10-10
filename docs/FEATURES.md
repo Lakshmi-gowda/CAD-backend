@@ -1,6 +1,7 @@
 # Feature Contract Specification (52 Features)
 
-Generated from `MODEL/CAD_XGBoost_Metadata.pkl` and `MODEL/CAD_Categorical_Encoders.pkl`.
+Generated from `backend/app/ml/artifacts/CAD_XGBoost_Metadata.pkl` and
+`backend/app/ml/artifacts/CAD_Categorical_Encoders.pkl`.
 
 ## Overview
 - **Total Features Expected by Model**: 52
