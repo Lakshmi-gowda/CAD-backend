@@ -16,9 +16,16 @@ class SuccessResponse(BaseModel, Generic[T]):
     success: bool = True
     data: T
 
+class ModelLoadStatus(BaseModel):
+    loaded: bool
+    error: Optional[str] = None
+    feature_count: Optional[int] = None
+    classes: List[str] = Field(default_factory=list)
+
 class HealthData(BaseModel):
     status: str = "ok"
     model_loaded: bool = True
+    model_status: Dict[str, ModelLoadStatus] = Field(default_factory=dict)
 
 class LivenessData(BaseModel):
     status: str = "ok"
@@ -35,3 +42,6 @@ class ModelInfoData(BaseModel):
     feature_count: int
     features: List[FeatureInfo]
     classes: List[str]
+    artery_feature_count: int = 0
+    artery_features: List[FeatureInfo] = Field(default_factory=list)
+    model_status: Dict[str, ModelLoadStatus] = Field(default_factory=dict)

@@ -50,7 +50,10 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="CAD Prediction Backend",
-        description="FastAPI service serving XGBoost model for Coronary Artery Disease prediction",
+        description=(
+            "FastAPI service serving the overall CAD XGBoost model and saved "
+            "LAD, LCX, and RCA artery pipelines"
+        ),
         version="1.0.0",
         lifespan=lifespan,
     )

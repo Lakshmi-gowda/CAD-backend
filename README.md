@@ -1,13 +1,15 @@
 # CAD Prediction Backend (FastAPI)
 
-FastAPI backend serving a trained XGBoost classifier for Coronary Artery Disease (CAD) risk prediction, built for the Multimodal AI Hackathon 2026 (Track A).
+FastAPI backend serving the existing XGBoost classifier for overall CAD and
+three saved pipeline models for LAD, LCX, and RCA artery predictions.
 
 ## Features
-- **Strict 52-Feature Contract**: Evaluates exactly 52 patient features matching training metadata.
+- **Separate Verified Feature Contracts**: The overall CAD model retains its 52-feature contract; each artery pipeline uses its saved 56-feature contract.
 - **Categorical Encoding**: Preprocesses 18 categorical features using pre-fitted `LabelEncoder` objects.
-- **Direct Probability Inference**: Outputs unmodified probabilities directly from `predict_proba()` mapped to `Normal` and `CAD`.
+- **Saved Artery Preprocessing**: Uses each artery pipeline's fitted `ColumnTransformer` and `OneHotEncoder`.
+- **Direct Probability Inference**: Returns overall CAD probabilities and separate LAD/LCX/RCA stenotic scores from each model's `predict_proba()`.
 - **Standardized Response Envelope**: Uniform success (`{"success": true, "data": ...}`) and error (`{"success": false, "error": ...}`) format.
-- **Prohibited Field Validation**: Rejects restricted clinical features (`Cath`, `LAD`, `LCX`, `RCA`) with HTTP 422 `VALIDATION_ERROR`.
+- **Target Validation**: Rejects `LAD`, `LCX`, and `RCA` target labels as request inputs.
 - **Vercel Serverless Ready**: Compatible with Vercel serverless deployment (`@vercel/python`) with cold-start warmup.
 
 ---
@@ -36,9 +38,11 @@ CAD backend/
 │   │   │   ├── preprocessing.py     # Feature validation, encoding, and ordering
 │   │   │   └── model_service.py     # Inference execution
 │   │   └── ml/
-│   │       └── artifacts/           # Serialized model artifacts
+│   │       └── artifacts/
+│   │           ├── CAD_XGBoost_*.pkl
+│   │           └── artery_models/   # Three saved .joblib pipelines + metadata.json
 ├── docs/
-│   └── FEATURES.md                  # Detailed 52-feature contract specification
+│   └── FEATURES.md                  # Overall CAD and artery input contracts
 ├── scripts/
 │   └── inspect_artifacts.py         # Verification and self-check inspection script
 ├── tests/
@@ -61,6 +65,10 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 ```
+Use the repository-pinned Python 3.12.7 runtime. The saved artery pipelines
+were serialized with scikit-learn 1.6.1, and loading them with a different
+scikit-learn version may fail; the backend reports that model as unavailable
+instead of returning fallback output.
 
 ### 2. Environment Setup
 ```bash
@@ -68,7 +76,8 @@ cp .env.example .env
 ```
 
 ### 3. Verify Model Artifacts
-Run the inspection script to verify all 5 startup self-checks:
+Run the inspection script to verify the 5 existing CAD artifact checks and
+the three artery pipeline contracts:
 ```bash
 python3 scripts/inspect_artifacts.py
 ```
@@ -92,19 +101,28 @@ pytest tests/test_api.py -v
 Confirms the API process is responding; this does not indicate whether the model is loaded.
 
 ### 2. `GET /health`
-Model readiness check. Returns HTTP 503 if artifacts are unavailable.
+Model readiness check. `model_status` reports whether the overall CAD model
+and each artery model loaded. `status` is `degraded` if an artery model failed
+to load; the overall CAD status remains separately visible.
 ```json
 {
   "success": true,
   "data": {
     "status": "ok",
-    "model_loaded": true
+    "model_loaded": true,
+    "model_status": {
+      "CAD": { "loaded": true },
+      "LAD": { "loaded": true },
+      "LCX": { "loaded": true },
+      "RCA": { "loaded": true }
+    }
   }
 }
 ```
 
 ### 3. `GET /model-info`
-Provides model metadata and all 52 feature definitions for frontend form construction.
+Provides the existing 52 overall CAD feature definitions, all 56 artery input
+definitions, and per-model load status.
 ```json
 {
   "success": true,
@@ -112,6 +130,13 @@ Provides model metadata and all 52 feature definitions for frontend form constru
     "model_name": "XGBoost CAD classifier",
     "model_version": "1.0.0",
     "feature_count": 52,
+    "artery_feature_count": 56,
+    "model_status": {
+      "CAD": { "loaded": true },
+      "LAD": { "loaded": true },
+      "LCX": { "loaded": true },
+      "RCA": { "loaded": true }
+    },
     "features": [
       { "name": "Age", "type": "numeric", "allowed_values": null, "required": true },
       { "name": "Sex", "type": "categorical", "allowed_values": ["Fmale", "Male"], "required": true }
@@ -122,9 +147,26 @@ Provides model metadata and all 52 feature definitions for frontend form constru
 ```
 
 ### 4. `POST /predict`
-Executes CAD inference on the 52 patient features.
+Executes overall CAD and all three artery inferences on a single patient input.
 
-The request must supply all 52 fields listed in [`docs/FEATURES.md`](docs/FEATURES.md).
+The request must supply all 56 fields in the artery pipeline feature contract,
+including the 52 existing CAD features and the additional `CHF`,
+`Exertional CP`, `LowTH Ang`, and `Cath` fields listed in
+[`docs/FEATURES.md`](docs/FEATURES.md). The backend does not fill in missing
+values. The `LAD`, `LCX`, and `RCA` targets are forbidden as request inputs.
+
+The response retains `prediction` and `probabilities` for the existing overall
+CAD result and adds `artery_predictions.LAD`, `.LCX`, and `.RCA`. Each artery
+entry contains `stenotic_probability` and `predicted_class`. A failed artery
+model returns an explicit error naming the failing model instead of a
+success-shaped response or fallback score.
+
+These artery outputs are model scores; clinical probability calibration has
+not been evaluated in this integration. The existing Lovable frontend source
+is not part of this repository. Its form/API integration must send the four
+additional fields and read `data.artery_predictions`; the backend will not
+derive or default missing values.
+
 No patient example or expected probability is shown because a verified source row
 and its original training-notebook prediction are not present in this repository.
 The automated inference test uses synthetic values only as an API smoke test, not

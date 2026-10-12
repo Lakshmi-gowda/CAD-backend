@@ -1,4 +1,4 @@
-# Feature Contract Specification (52 Features)
+# Overall CAD Feature Contract (52 Features)
 
 Generated from `backend/app/ml/artifacts/CAD_XGBoost_Metadata.pkl` and
 `backend/app/ml/artifacts/CAD_Categorical_Encoders.pkl`.
@@ -8,7 +8,41 @@ Generated from `backend/app/ml/artifacts/CAD_XGBoost_Metadata.pkl` and
 - **Feature Order**: Fixed. Must match the exact index order below.
 - **Categorical Features**: 18 features (encoded via `LabelEncoder`).
 - **Numeric Features**: 34 features (float conversion; range limits are `NEEDS_CONFIRMATION`).
-- **Excluded Features (Never Accepted as Prediction Inputs)**: `Cath`, `LAD`, `LCX`, `RCA`, `Exertional CP`, `LowTH Ang`, `CHF`.
+- The overall CAD model does not accept `Cath`, `CHF`, `Exertional CP`, or `LowTH Ang`.
+- `LAD`, `LCX`, and `RCA` are target labels and are never accepted as prediction inputs.
+
+## Artery Model Input Contract
+
+The saved LAD, LCX, and RCA pipelines each require **56 input columns**, in the
+order stored in `backend/app/ml/artifacts/artery_models/metadata.json`. They use
+the 52 CAD features listed below plus these four additional required inputs:
+
+| Feature | Type | Saved training categories / behavior |
+| :--- | :--- | :--- |
+| `CHF` | Categorical | `N`, `Y` |
+| `Exertional CP` | Categorical | Training category: `N`; the saved `OneHotEncoder` uses `handle_unknown="ignore"` |
+| `LowTH Ang` | Categorical | `N`, `Y` |
+| `Cath` | Categorical | `CAD`, `Normal` |
+
+All three artery pipelines have the same verified contract: 34 numeric columns
+pass through unchanged after finite-number validation, and 22 categorical
+columns are transformed by the fitted `OneHotEncoder`. The pipeline input
+feature count is 56 (the classifier receives 80 columns after one-hot
+encoding). Feature order is determined by `metadata.json`; callers must send
+all 56 named values. The API rejects the target fields `LAD`, `LCX`, and `RCA`.
+
+The existing Lovable frontend source is not present in this repository. Its
+assessment form must explicitly collect or map the four additional fields
+above before `POST /predict` can return artery results. The backend does not
+infer or default these values. In particular, `Cath` must be supplied as its
+own existing patient-data value; it is not populated from an overall CAD
+prediction or an artery prediction.
+
+The artery artifacts declare `Normal` as the negative class and `Stenotic` as
+the positive class. Each pipeline's `classes_` is `[0, 1]`; the mapping comes
+from that saved metadata, and inference locates the `Stenotic` class in
+`classes_` instead of assuming a fixed probability-array position. Artery
+scores are not described as clinically calibrated probabilities.
 
 ---
 

@@ -13,8 +13,28 @@ def liveness_check():
 def health_check():
     registry = get_artifact_registry()
     if not registry.is_loaded:
-        raise ModelUnavailableError("Model artifacts are not loaded")
+        statuses = registry.get_model_status()
+        raise ModelUnavailableError(
+            "Overall CAD model is not loaded",
+            fields={
+                "model_status": [
+                    f"{name}: loaded={status['loaded']}; error={status['error']}"
+                    for name, status in statuses.items()
+                ]
+            },
+        )
 
     return SuccessResponse(
-        data=HealthData(status="ok", model_loaded=True)
+        data=HealthData(
+            status=(
+                "ok"
+                if all(
+                    status["loaded"]
+                    for status in registry.get_model_status().values()
+                )
+                else "degraded"
+            ),
+            model_loaded=True,
+            model_status=registry.get_model_status(),
+        )
     )

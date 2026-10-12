@@ -2,7 +2,7 @@ import math
 from typing import Any, Dict, List, Tuple
 import pandas as pd
 
-from backend.app.core.errors import ValidationError
+from backend.app.core.errors import ModelUnavailableError, ValidationError
 from backend.app.services.artifact_loader import ArtifactRegistry, EXCLUDED_FEATURES
 
 def validate_and_preprocess(
@@ -95,3 +95,90 @@ def validate_and_preprocess(
     df = pd.DataFrame([processed_row])
     df = df[registry.feature_names]
     return df
+
+
+def validate_and_preprocess_artery_inputs(
+    raw_features: Dict[str, Any], registry: ArtifactRegistry
+) -> pd.DataFrame:
+    """Validate raw artery inputs and preserve the fitted pipeline's input order."""
+    expected_features = registry.artery_feature_names
+    if not expected_features:
+        raise ModelUnavailableError("Artery model feature metadata is unavailable")
+
+    categorical_features = set(registry.artery_categorical_features)
+    numeric_features = set(registry.artery_numeric_features)
+    fields: Dict[str, List[str]] = {}
+
+    missing_features = [
+        feature for feature in expected_features if feature not in raw_features
+    ]
+    if missing_features:
+        fields["missing_features"] = [
+            f"Missing required feature: {feature}" for feature in missing_features
+        ]
+
+    for feature in raw_features:
+        if feature in expected_features:
+            continue
+        if feature in {"LAD", "LCX", "RCA"}:
+            fields[feature] = [
+                f"Target label '{feature}' must never be provided as prediction input"
+            ]
+        else:
+            fields[feature] = [
+                f"Unknown feature '{feature}' is not recognized by the artery models"
+            ]
+
+    processed_row: Dict[str, Any] = {}
+    for feature in expected_features:
+        if feature not in raw_features:
+            continue
+        value = raw_features[feature]
+
+        if feature in categorical_features:
+            if not isinstance(value, str):
+                fields[feature] = [
+                    "Expected string categorical label, "
+                    f"got {type(value).__name__}. "
+                    f"Training categories: {registry.artery_category_values[feature]}"
+                ]
+                continue
+
+            categories = registry.artery_category_values[feature]
+            unknown_behavior = registry.artery_unknown_category_behavior.get(
+                "categorical", "error"
+            )
+            if value not in categories and unknown_behavior != "ignore":
+                fields[feature] = [
+                    f"Invalid categorical value '{value}'. "
+                    f"Allowed values are: {categories}"
+                ]
+                continue
+            processed_row[feature] = value
+
+        elif feature in numeric_features:
+            if isinstance(value, bool):
+                fields[feature] = ["Expected numeric float or int, got boolean"]
+                continue
+            try:
+                numeric_value = float(value)
+            except (ValueError, TypeError):
+                fields[feature] = [
+                    f"Value '{value}' could not be converted to a valid finite float"
+                ]
+                continue
+            if math.isnan(numeric_value) or math.isinf(numeric_value):
+                fields[feature] = ["Numeric value cannot be NaN or infinity"]
+                continue
+            processed_row[feature] = numeric_value
+
+    if fields:
+        raise ValidationError(
+            message="Input feature validation failed",
+            fields=fields,
+        )
+
+    return pd.DataFrame(
+        [[processed_row[feature] for feature in expected_features]],
+        columns=expected_features,
+    )

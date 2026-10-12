@@ -7,14 +7,17 @@ Reads and validates:
   1. CAD_XGBoost_Metadata.pkl
   2. CAD_Categorical_Encoders.pkl
   3. CAD_XGBoost_Model.pkl
+  4. LAD, LCX, and RCA joblib pipelines plus artery metadata
 
-Performs all 5 startup self-checks specified in PRD Section 5.
+Performs the 5 CAD startup self-checks and verifies each artery pipeline's
+feature count, feature order, and fitted categorical preprocessing.
 """
 
 import os
 import sys
 import pickle
 import pickletools
+import json
 
 def find_artifacts_dir():
     env_dir = os.environ.get("ARTIFACTS_DIR")
@@ -217,6 +220,98 @@ def run_self_checks(meta, encoders, booster_features, classes):
     print(f"OVERALL SELF-CHECK RESULT: {'ALL CHECKS PASSED (5/5)' if all_passed else 'SOME CHECKS FAILED'}")
     return all_passed
 
+def inspect_artery_models(artifacts_dir):
+    artery_dir = os.path.join(artifacts_dir, "artery_models")
+    metadata_path = os.path.join(artery_dir, "metadata.json")
+    targets = ["LAD", "LCX", "RCA"]
+    print("\n" + "=" * 60)
+    print("ARTERY MODEL PIPELINE CHECKS:")
+    print("=" * 60)
+
+    missing = [
+        path
+        for path in [
+            metadata_path,
+            *[
+                os.path.join(artery_dir, f"{target}_model.joblib")
+                for target in targets
+            ],
+        ]
+        if not os.path.isfile(path)
+    ]
+    if missing:
+        for path in missing:
+            print(f"  FAIL: Required artifact is missing: {path}")
+        return False
+
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+    features = metadata.get("feature_columns", [])
+    metadata_targets = metadata.get("targets", [])
+    if metadata_targets != targets:
+        print(f"  FAIL: Expected targets {targets}, found {metadata_targets}")
+        return False
+    if any(target in features for target in targets):
+        print("  FAIL: An artery target is included in feature_columns")
+        return False
+
+    import joblib
+
+    all_passed = True
+    print(f"  Metadata inputs: {len(features)}")
+    print(f"  Exact feature order: {features}")
+    print(
+        f"  Class semantics: {metadata.get('negative_class')} (negative), "
+        f"{metadata.get('positive_class')} (positive)"
+    )
+
+    for target in targets:
+        model_path = os.path.join(artery_dir, f"{target}_model.joblib")
+        try:
+            model = joblib.load(model_path)
+        except Exception as exc:
+            print(f"  FAIL {target}: Could not load {model_path}: {exc}")
+            all_passed = False
+            continue
+
+        model_features = list(getattr(model, "feature_names_in_", []))
+        feature_count = getattr(model, "n_features_in_", None)
+        pipeline_matches = (
+            feature_count == len(features)
+            and model_features == features
+            and hasattr(model, "predict_proba")
+            and hasattr(model, "classes_")
+        )
+        print(
+            f"  {'PASS' if pipeline_matches else 'FAIL'} {target}: "
+            f"type={type(model).__module__}.{type(model).__name__}, "
+            f"n_features_in_={feature_count}, classes_="
+            f"{list(getattr(model, 'classes_', []))}, "
+            f"feature_order_matches={model_features == features}"
+        )
+        preprocessor = getattr(model, "named_steps", {}).get("preprocessing")
+        if preprocessor is not None:
+            for name, transformer, columns in preprocessor.transformers_:
+                if columns is None:
+                    continue
+                print(f"    {name} columns ({len(columns)}): {list(columns)}")
+                if hasattr(transformer, "categories_"):
+                    print(
+                        "    fitted categories: "
+                        f"{dict(zip(columns, [list(values) for values in transformer.categories_]))}"
+                    )
+                    print(
+                        "    handle_unknown: "
+                        f"{getattr(transformer, 'handle_unknown', 'error')}"
+                    )
+        all_passed = all_passed and pipeline_matches
+
+    print(
+        "ARTERY PIPELINE RESULT: "
+        f"{'ALL THREE PASSED' if all_passed else 'ONE OR MORE CHECKS FAILED'}"
+    )
+    return all_passed
+
 def main():
     try:
         artifacts_dir = find_artifacts_dir()
@@ -225,7 +320,8 @@ def main():
         encoders, sklearn_ver = inspect_encoders(artifacts_dir)
         model_type, classes, booster_feats = inspect_model(artifacts_dir, meta)
         passed = run_self_checks(meta, encoders, booster_feats, classes)
-        if not passed:
+        artery_passed = inspect_artery_models(artifacts_dir)
+        if not passed or not artery_passed:
             sys.exit(1)
     except Exception as e:
         print(f"\n[ERROR] Inspection failed: {e}", file=sys.stderr)

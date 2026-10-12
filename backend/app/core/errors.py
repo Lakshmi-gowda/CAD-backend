@@ -39,19 +39,29 @@ class InvalidRequestError(AppException):
         )
 
 class ModelUnavailableError(AppException):
-    def __init__(self, message: str = "Model artifacts are not loaded or available"):
+    def __init__(
+        self,
+        message: str = "Model artifacts are not loaded or available",
+        fields: Optional[Dict[str, List[str]]] = None,
+    ):
         super().__init__(
             status_code=503,
             code="MODEL_UNAVAILABLE",
             message=message,
+            fields=fields,
         )
 
 class InternalError(AppException):
-    def __init__(self, message: str = "An internal server error occurred"):
+    def __init__(
+        self,
+        message: str = "An internal server error occurred",
+        fields: Optional[Dict[str, List[str]]] = None,
+    ):
         super().__init__(
             status_code=500,
             code="INTERNAL_ERROR",
             message=message,
+            fields=fields,
         )
 
 def format_error_response(
