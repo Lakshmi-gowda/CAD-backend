@@ -76,19 +76,68 @@ def test_model_info_endpoint():
     assert set(sex_feature["allowed_values"]) == {"Fmale", "Male"}
 
 # ==========================================
-# 3. CORS Preflight Tests
+# 3. CORS Tests
 # ==========================================
-def test_cors_preflight():
-    response = client.options(
+@pytest.fixture
+def cors_client(monkeypatch):
+    from backend.app import main as main_module
+
+    settings = Settings(
+        CORS_ORIGINS=(
+            "http://localhost:8080, "
+            "https://id-preview--4711e78b-8b24-4fd5-9d46-b7e957db5cb3.lovable.app"
+        )
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: settings)
+    return TestClient(main_module.create_app())
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://localhost:8080",
+        "https://id-preview--4711e78b-8b24-4fd5-9d46-b7e957db5cb3.lovable.app",
+    ],
+)
+def test_cors_preflight_allows_configured_origins(cors_client, origin):
+    requested_headers = "Content-Type, Authorization, X-Requested-With"
+    response = cors_client.options(
         "/predict",
         headers={
-            "Origin": "http://localhost:5173",
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": requested_headers,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == origin
+    assert "POST" in response.headers["access-control-allow-methods"]
+    allowed_headers = {
+        header.strip().lower()
+        for header in response.headers["access-control-allow-headers"].split(",")
+    }
+    assert {header.lower() for header in requested_headers.split(",")} <= allowed_headers
+
+def test_cors_preflight_rejects_unconfigured_origin(cors_client):
+    response = cors_client.options(
+        "/predict",
+        headers={
+            "Origin": "https://untrusted.example",
             "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "Content-Type",
         },
     )
-    assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
+
+def test_cors_origins_are_parsed_as_comma_separated_values():
+    settings = Settings(CORS_ORIGINS=" , https://one.example, , https://two.example ")
+
+    assert settings.cors_origins_list == [
+        "https://one.example",
+        "https://two.example",
+    ]
 
 # ==========================================
 # 4. Valid Predict Inference Tests

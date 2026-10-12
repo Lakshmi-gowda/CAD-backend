@@ -65,8 +65,8 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type"],
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     # Register custom exception handlers for standardized envelopes

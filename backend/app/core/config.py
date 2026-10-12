@@ -9,7 +9,10 @@ class Settings(BaseSettings):
     ENV: str = "development"
     LOG_LEVEL: str = "INFO"
     ARTIFACTS_DIR: str = "backend/app/ml/artifacts"
-    CORS_ORIGINS: str = "http://localhost:5173"
+    CORS_ORIGINS: str = (
+        "http://localhost:8080,"
+        "https://id-preview--4711e78b-8b24-4fd5-9d46-b7e957db5cb3.lovable.app"
+    )
     MAX_REQUEST_SIZE_BYTES: int = Field(default=1_048_576, gt=0)
 
     model_config = {
