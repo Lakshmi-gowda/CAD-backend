@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from backend.app.core.errors import ModelUnavailableError
+from backend.app.core.errors import ModelUnavailableError, ValidationError
 from backend.app.schemas.common import SuccessResponse
 from backend.app.schemas.predict import PredictRequest, PredictData
 from backend.app.services.artifact_loader import get_artifact_registry
@@ -12,39 +12,48 @@ from backend.app.services.model_service import predict_arteries, predict_cad
 
 router = APIRouter(tags=["Prediction"])
 
-@router.post("/predict", response_model=SuccessResponse[PredictData])
+@router.post(
+    "/predict",
+    response_model=SuccessResponse[PredictData],
+    response_model_exclude_none=True,
+)
 def predict(request: PredictRequest):
     registry = get_artifact_registry()
-    if not registry.is_loaded:
-        raise ModelUnavailableError("Model artifacts are not loaded")
+    if request.cad_features is None and request.artery_features is None:
+        raise ValidationError(
+            "Provide cad_features, artery_features, or both",
+            fields={"request": ["At least one prediction input set is required"]},
+        )
 
-    # Do not return a CAD-only success if an artery model is unavailable.
-    for artery in ("LAD", "LCX", "RCA"):
-        status = registry.artery_model_status.get(artery, {})
-        if not status.get("loaded"):
-            error = status.get("error") or "model is not loaded"
+    cad_result = None
+    if request.cad_features is not None:
+        if not registry.is_loaded:
             raise ModelUnavailableError(
-                f"{artery} artery model is unavailable: {error}",
-                fields={"model": [artery]},
+                f"CAD model is unavailable: "
+                f"{registry.load_error or 'artifacts not initialized'}",
+                fields={"model": ["CAD"]},
             )
+        cad_features = validate_and_preprocess(request.cad_features, registry)
+        cad_result = predict_cad(cad_features, registry)
 
-    artery_features = validate_and_preprocess_artery_inputs(
-        request.features, registry
-    )
-    cad_features = validate_and_preprocess(
-        {
-            feature: request.features[feature]
-            for feature in registry.feature_names
-            if feature in request.features
-        },
-        registry,
-    )
+    artery_predictions = None
+    if request.artery_features is not None:
+        for artery in ("LAD", "LCX", "RCA"):
+            status = registry.artery_model_status.get(artery, {})
+            if not status.get("loaded"):
+                error = status.get("error") or "model is not loaded"
+                raise ModelUnavailableError(
+                    f"{artery} artery model is unavailable: {error}",
+                    fields={"model": [artery]},
+                )
+        artery_features = validate_and_preprocess_artery_inputs(
+            request.artery_features, registry
+        )
+        artery_predictions = predict_arteries(artery_features, registry)
 
-    cad_result = predict_cad(cad_features, registry)
-    artery_predictions = predict_arteries(artery_features, registry)
-    result = PredictData(
-        **cad_result.model_dump(),
-        artery_predictions=artery_predictions,
+    return SuccessResponse(
+        data=PredictData(
+            cad_prediction=cad_result,
+            artery_predictions=artery_predictions,
+        )
     )
-
-    return SuccessResponse(data=result)

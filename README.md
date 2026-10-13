@@ -4,12 +4,12 @@ FastAPI backend serving the existing XGBoost classifier for overall CAD and
 three saved pipeline models for LAD, LCX, and RCA artery predictions.
 
 ## Features
-- **Separate Verified Feature Contracts**: The overall CAD model retains its 52-feature contract; each artery pipeline uses its saved 56-feature contract.
+- **Separate Verified Feature Contracts**: The overall CAD model retains its original 52-feature contract; each artery pipeline uses its retrained 55-feature contract.
 - **Categorical Encoding**: Preprocesses 18 categorical features using pre-fitted `LabelEncoder` objects.
 - **Saved Artery Preprocessing**: Uses each artery pipeline's fitted `ColumnTransformer` and `OneHotEncoder`.
-- **Direct Probability Inference**: Returns overall CAD probabilities and separate LAD/LCX/RCA stenotic scores from each model's `predict_proba()`.
+- **Direct Model Inference**: Uses each model's `predict()` and `predict_proba()` methods and maps probabilities in the trained model's class order.
 - **Standardized Response Envelope**: Uniform success (`{"success": true, "data": ...}`) and error (`{"success": false, "error": ...}`) format.
-- **Target Validation**: Rejects `LAD`, `LCX`, and `RCA` target labels as request inputs.
+- **Forbidden Input Validation**: Excludes `Cath`, `LAD`, `LCX`, and `RCA` from artery inputs.
 - **Vercel Serverless Ready**: Compatible with Vercel serverless deployment (`@vercel/python`) with cold-start warmup.
 
 ---
@@ -121,7 +121,7 @@ to load; the overall CAD status remains separately visible.
 ```
 
 ### 3. `GET /model-info`
-Provides the existing 52 overall CAD feature definitions, all 56 artery input
+Provides the existing 52 overall CAD feature definitions, all 55 artery input
 definitions, and per-model load status.
 ```json
 {
@@ -130,7 +130,7 @@ definitions, and per-model load status.
     "model_name": "XGBoost CAD classifier",
     "model_version": "1.0.0",
     "feature_count": 52,
-    "artery_feature_count": 56,
+    "artery_feature_count": 55,
     "model_status": {
       "CAD": { "loaded": true },
       "LAD": { "loaded": true },
@@ -147,25 +147,26 @@ definitions, and per-model load status.
 ```
 
 ### 4. `POST /predict`
-Executes overall CAD and all three artery inferences on a single patient input.
+Runs overall CAD, all three artery predictions, or both independently. Supply
+`cad_features` for the original CAD model's 52-feature contract and/or
+`artery_features` for the artery pipelines' 55-feature contract. The backend
+does not fill in missing values. The artery contract excludes `Cath`, `LAD`,
+`LCX`, and `RCA`; these fields are never sent to an artery model.
 
-The request must supply all 56 fields in the artery pipeline feature contract,
-including the 52 existing CAD features and the additional `CHF`,
-`Exertional CP`, `LowTH Ang`, and `Cath` fields listed in
-[`docs/FEATURES.md`](docs/FEATURES.md). The backend does not fill in missing
-values. The `LAD`, `LCX`, and `RCA` targets are forbidden as request inputs.
-
-The response retains `prediction` and `probabilities` for the existing overall
-CAD result and adds `artery_predictions.LAD`, `.LCX`, and `.RCA`. Each artery
-entry contains `stenotic_probability` and `predicted_class`. A failed artery
-model returns an explicit error naming the failing model instead of a
-success-shaped response or fallback score.
+For example, a CAD-only request is `{"cad_features": {...}}`, an artery-only
+request is `{"artery_features": {...}}`, and a combined request supplies both
+keys. The response includes `data.cad_prediction` only when CAD inputs were
+provided and `data.artery_predictions.LAD`, `.LCX`, and `.RCA` only when artery
+inputs were provided. Each artery result returns the predicted class,
+class-labeled probabilities, and `stenotic_probability`. A failed requested
+model returns an explicit error rather than a success-shaped response or
+fallback score.
 
 These artery outputs are model scores; clinical probability calibration has
 not been evaluated in this integration. The existing Lovable frontend source
-is not part of this repository. Its form/API integration must send the four
-additional fields and read `data.artery_predictions`; the backend will not
-derive or default missing values.
+is not part of this repository. Its form/API integration should send separate
+`cad_features` and/or `artery_features` maps and read the corresponding result
+keys; the backend will not derive or default missing values.
 
 No patient example or expected probability is shown because a verified source row
 and its original training-notebook prediction are not present in this repository.
@@ -181,7 +182,7 @@ for clinical interpretation or prediction-parity validation.
     "message": "Input feature validation failed",
     "fields": {
       "missing_features": ["Missing required feature: Age"],
-      "LAD": ["Excluded feature 'LAD' must never be provided as prediction input"]
+      "LAD": ["Excluded feature 'LAD' must never be provided as artery model input"]
     }
   }
 }

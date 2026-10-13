@@ -28,23 +28,39 @@ def predict_cad(df: pd.DataFrame, registry: ArtifactRegistry) -> CadPrediction:
         raise ModelUnavailableError("CAD model is not available in registry")
 
     try:
-        # PRD Rule 6: Probabilities must come directly from predict_proba()
+        classes = list(cad_model.classes_)
         raw_proba = cad_model.predict_proba(df)
-        if len(raw_proba) == 0:
-            raise ValueError("predict_proba returned empty result")
+        if len(raw_proba) != 1:
+            raise ValueError(
+                f"predict_proba returned {len(raw_proba)} rows; expected one"
+            )
+        proba = [float(value) for value in raw_proba[0]]
+        if len(proba) != len(classes):
+            raise ValueError("predict_proba output length does not match model.classes_")
+        if any(
+            not math.isfinite(value) or value < 0.0 or value > 1.0
+            for value in proba
+        ):
+            raise ValueError("predict_proba returned an invalid probability")
 
-        proba = raw_proba[0]
-        # Target mapping: Normal: 0, CAD: 1
-        prob_normal = float(proba[0])
-        prob_cad = float(proba[1])
-
-        probabilities: Dict[str, float] = {
-            "CAD": prob_cad,
-            "Normal": prob_normal,
+        class_labels = {
+            value: label
+            for label, value in registry.target_mapping.items()
         }
+        probabilities = {
+            class_labels[value]: probability
+            for value, probability in zip(classes, proba)
+            if value in class_labels
+        }
+        if len(probabilities) != len(classes):
+            raise ValueError(
+                f"Model classes_ cannot be mapped using target_mapping: {classes}"
+            )
 
-        # Predict label based on max probability / threshold
-        prediction = "CAD" if prob_cad >= prob_normal else "Normal"
+        raw_prediction = cad_model.predict(df)
+        if len(raw_prediction) != 1 or raw_prediction[0] not in class_labels:
+            raise ValueError("predict returned an unmapped CAD class")
+        prediction = class_labels[raw_prediction[0]]
 
         return CadPrediction(
             prediction=prediction,
@@ -58,46 +74,26 @@ def predict_cad(df: pd.DataFrame, registry: ArtifactRegistry) -> CadPrediction:
         raise InternalError("Model inference failed")
 
 
-def _class_value_for_label(
-    label: str, classes: List[Any], metadata: Dict[str, Any]
-) -> Any:
+def _class_value_for_label(label: str, classes: List[Any]) -> Any:
     if label in classes:
         return label
-
-    class_mapping = metadata.get("class_mapping", {})
-    if isinstance(class_mapping, dict) and label in class_mapping:
-        value = class_mapping[label]
-        if value in classes:
-            return value
-
-    if set(classes) == {0, 1}:
-        if label == metadata.get("negative_class") == "Normal":
-            return 0
-        if label == metadata.get("positive_class") == "Stenotic":
-            return 1
 
     raise ValueError(
         f"Cannot map model class {label!r} to one of classes_={classes!r}"
     )
 
 
-def _label_for_class_value(value: Any, labels_and_values: Dict[str, Any]) -> str:
-    matching_labels = [
-        label
-        for label, class_value in labels_and_values.items()
-        if value == class_value
-    ]
-    if len(matching_labels) != 1:
-        raise ValueError(f"Model returned an unmapped class value: {value!r}")
-    return matching_labels[0]
-
-
 def predict_arteries(
     df: pd.DataFrame, registry: ArtifactRegistry
 ) -> Dict[str, ArteryPrediction]:
-    """Run each saved artery pipeline and map classes using artifact metadata."""
+    """Run each fitted artery pipeline and use its actual class ordering."""
     predictions: Dict[str, ArteryPrediction] = {}
-    metadata = registry.artery_metadata
+    forbidden_columns = {"Cath", "LAD", "LCX", "RCA"} & set(df.columns)
+    if forbidden_columns:
+        raise InternalError(
+            "Excluded features reached artery model inference",
+            fields={"features": sorted(forbidden_columns)},
+        )
 
     for artery in ("LAD", "LCX", "RCA"):
         status = registry.artery_model_status.get(artery, {})
@@ -111,9 +107,9 @@ def predict_arteries(
 
         try:
             classes = list(model.classes_)
-            label_values = {
-                label: _class_value_for_label(label, classes, metadata)
-                for label in ("Normal", "Stenotic")
+            class_labels = {
+                value: _class_value_for_label(value, classes)
+                for value in classes
             }
             raw_probabilities = model.predict_proba(df)
             if len(raw_probabilities) != 1:
@@ -131,21 +127,18 @@ def predict_arteries(
             ):
                 raise ValueError("predict_proba returned an invalid probability")
 
-            stenotic_class_value = label_values["Stenotic"]
-            stenotic_index = next(
-                index
-                for index, value in enumerate(classes)
-                if value == stenotic_class_value
-            )
-            predicted_index = max(
-                range(len(probabilities)), key=probabilities.__getitem__
-            )
-            predicted_class = _label_for_class_value(
-                classes[predicted_index], label_values
-            )
+            raw_prediction = model.predict(df)
+            if len(raw_prediction) != 1 or raw_prediction[0] not in classes:
+                raise ValueError("predict returned an unmapped artery class")
+            predicted_class = class_labels[raw_prediction[0]]
+            named_probabilities = {
+                class_labels[class_value]: probability
+                for class_value, probability in zip(classes, probabilities)
+            }
             predictions[artery] = ArteryPrediction(
-                stenotic_probability=probabilities[stenotic_index],
+                stenotic_probability=named_probabilities["Stenotic"],
                 predicted_class=predicted_class,
+                probabilities=named_probabilities,
             )
         except Exception as exc:
             logger.exception("%s artery inference failed: %s", artery, exc)

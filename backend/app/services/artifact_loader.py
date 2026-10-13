@@ -10,6 +10,7 @@ logger = logging.getLogger("cad_backend")
 
 EXCLUDED_FEATURES = ["Cath", "LAD", "LCX", "RCA"]
 ARTERY_TARGETS = ("LAD", "LCX", "RCA")
+ARTERY_FEATURE_COUNT = 55
 
 class ArtifactRegistry:
     def __init__(self):
@@ -126,23 +127,50 @@ class ArtifactRegistry:
             targets = metadata.get("targets")
             if not isinstance(feature_names, list) or not feature_names:
                 raise ValueError("metadata.json must contain feature_columns")
+            if any(not isinstance(feature, str) or not feature for feature in feature_names):
+                raise ValueError("metadata.json feature_columns must contain feature names")
+            if len(feature_names) != ARTERY_FEATURE_COUNT:
+                raise ValueError(
+                    f"metadata.json must define exactly {ARTERY_FEATURE_COUNT} features; "
+                    f"got {len(feature_names)}"
+                )
+            if metadata.get("feature_count") != ARTERY_FEATURE_COUNT:
+                raise ValueError(
+                    f"metadata.json feature_count must be {ARTERY_FEATURE_COUNT}"
+                )
             if targets != list(ARTERY_TARGETS):
                 raise ValueError(
                     f"metadata.json targets must be {list(ARTERY_TARGETS)}, got {targets}"
                 )
             if len(feature_names) != len(set(feature_names)):
                 raise ValueError("metadata.json feature_columns contains duplicates")
-            included_targets = [target for target in ARTERY_TARGETS if target in feature_names]
-            if included_targets:
+            included_excluded = [
+                feature for feature in EXCLUDED_FEATURES if feature in feature_names
+            ]
+            if included_excluded:
                 raise ValueError(
-                    f"Artery target columns cannot be model inputs: {included_targets}"
+                    "Excluded columns cannot be artery model inputs: "
+                    f"{included_excluded}"
                 )
-            if metadata.get("positive_class") != "Stenotic":
+            excluded_columns = metadata.get("excluded_input_columns")
+            if (
+                not isinstance(excluded_columns, list)
+                or set(excluded_columns) != set(EXCLUDED_FEATURES)
+                or len(excluded_columns) != len(EXCLUDED_FEATURES)
+            ):
                 raise ValueError(
-                    "metadata.json positive_class must be 'Stenotic'"
+                    "metadata.json excluded_input_columns must list exactly "
+                    f"{EXCLUDED_FEATURES}"
                 )
-            if metadata.get("negative_class") != "Normal":
-                raise ValueError("metadata.json negative_class must be 'Normal'")
+            target_classes = metadata.get("target_classes")
+            if not isinstance(target_classes, dict) or any(
+                set(target_classes.get(artery, [])) != {"Normal", "Stenotic"}
+                for artery in ARTERY_TARGETS
+            ):
+                raise ValueError(
+                    "metadata.json target_classes must list Normal and Stenotic "
+                    "for each artery"
+                )
 
             self.artery_metadata = metadata
             self.artery_feature_names = list(feature_names)
@@ -191,10 +219,7 @@ class ArtifactRegistry:
                     "loaded": True,
                     "error": None,
                     "feature_count": len(self.artery_feature_names),
-                    "classes": [
-                        str(metadata["negative_class"]),
-                        str(metadata["positive_class"]),
-                    ],
+                    "classes": [str(value) for value in model.classes_],
                 }
                 logger.info(
                     "Loaded %s artery model from %s with %d input features",
@@ -246,11 +271,13 @@ class ArtifactRegistry:
             )
         if not hasattr(model, "predict_proba") or not hasattr(model, "classes_"):
             raise ValueError(f"{artery} pipeline must expose predict_proba() and classes_")
+        if not hasattr(model, "predict"):
+            raise ValueError(f"{artery} pipeline must expose predict()")
 
         named_steps = getattr(model, "named_steps", {})
-        preprocessor = named_steps.get("preprocessing")
+        preprocessor = named_steps.get("preprocessor")
         if preprocessor is None:
-            raise ValueError(f"{artery} pipeline has no 'preprocessing' step")
+            raise ValueError(f"{artery} pipeline has no fitted 'preprocessor' step")
         preprocessing_features = getattr(preprocessor, "feature_names_in_", None)
         if (
             preprocessing_features is not None
@@ -277,7 +304,9 @@ class ArtifactRegistry:
             raise ValueError(
                 f"{artery} preprocessing columns do not cover the metadata feature contract"
             )
-        categories = getattr(categorical_transformer, "categories_", None)
+        categorical_steps = getattr(categorical_transformer, "named_steps", {})
+        one_hot_encoder = categorical_steps.get("onehot")
+        categories = getattr(one_hot_encoder, "categories_", None)
         if categories is None or len(categories) != len(categorical_features):
             raise ValueError(f"{artery} categorical encoder has no fitted categories")
 
@@ -287,26 +316,17 @@ class ArtifactRegistry:
         }
         unknown_behavior = {
             "categorical": str(
-                getattr(categorical_transformer, "handle_unknown", "error")
+                getattr(one_hot_encoder, "handle_unknown", "error")
             )
         }
         classes = list(getattr(model, "classes_", []))
-        if len(classes) != 2:
-            raise ValueError(f"{artery} model must have exactly two classes")
-        class_mapping = self.artery_metadata.get("class_mapping")
-        if class_mapping is None and set(classes) not in (
-            {0, 1},
-            {"Normal", "Stenotic"},
-        ):
+        if set(classes) != {"Normal", "Stenotic"}:
             raise ValueError(
-                f"{artery} classes_ cannot be mapped using metadata: {classes}"
+                f"{artery} classes_ must contain Normal and Stenotic; got {classes}"
             )
-        if isinstance(class_mapping, dict) and any(
-            label not in class_mapping or class_mapping[label] not in classes
-            for label in ("Normal", "Stenotic")
-        ):
+        if set(classes) != set(self.artery_metadata["target_classes"][artery]):
             raise ValueError(
-                f"{artery} metadata class_mapping does not match classes_={classes}"
+                f"{artery} classes_ do not match metadata target_classes"
             )
 
         return {

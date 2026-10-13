@@ -1,4 +1,10 @@
 {
+  "model_type": "RandomForestClassifier",
+  "targets": [
+    "LAD",
+    "LCX",
+    "RCA"
+  ],
   "feature_columns": [
     "Age",
     "Weight",
@@ -54,18 +60,27 @@
     "PLT",
     "EF-TTE",
     "Region RWMA",
-    "VHD",
-    "Cath"
+    "VHD"
   ],
-  "targets": [
+  "excluded_input_columns": [
+    "Cath",
     "LAD",
     "LCX",
     "RCA"
   ],
-  "positive_class": "Stenotic",
-  "negative_class": "Normal",
-  "dataset_rows": 303,
-  "model_type": "RandomForestClassifier",
-  "test_size": 0.2,
-  "random_state": 42
+  "feature_count": 55,
+  "target_classes": {
+    "LAD": [
+      "Normal",
+      "Stenotic"
+    ],
+    "LCX": [
+      "Normal",
+      "Stenotic"
+    ],
+    "RCA": [
+      "Normal",
+      "Stenotic"
+    ]
+  }
 }

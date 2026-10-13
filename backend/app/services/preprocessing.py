@@ -120,9 +120,9 @@ def validate_and_preprocess_artery_inputs(
     for feature in raw_features:
         if feature in expected_features:
             continue
-        if feature in {"LAD", "LCX", "RCA"}:
+        if feature in EXCLUDED_FEATURES:
             fields[feature] = [
-                f"Target label '{feature}' must never be provided as prediction input"
+                f"Excluded feature '{feature}' must never be provided as artery model input"
             ]
         else:
             fields[feature] = [

@@ -1,5 +1,5 @@
-from typing import Any, Dict
-from pydantic import BaseModel, Field
+from typing import Any, Dict, Optional
+from pydantic import BaseModel, ConfigDict, Field
 
 DEFAULT_DISCLAIMER = (
     "For decision support and educational purposes only. "
@@ -8,17 +8,24 @@ DEFAULT_DISCLAIMER = (
 )
 
 class PredictRequest(BaseModel):
-    features: Dict[str, Any] = Field(
-        ...,
+    model_config = ConfigDict(extra="forbid")
+
+    cad_features: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Values for the original CAD model's separate 52-feature contract.",
+    )
+    artery_features: Optional[Dict[str, Any]] = Field(
+        default=None,
         description=(
-            "Dictionary mapping the 56 saved artery-model feature names to their "
-            "patient values. The existing overall CAD model uses its 52-feature subset."
+            "Values for the saved LAD, LCX, and RCA pipeline's 55-feature contract. "
+            "Cath and LAD/LCX/RCA targets are excluded."
         ),
     )
 
 class ArteryPrediction(BaseModel):
     stenotic_probability: float
     predicted_class: str
+    probabilities: Dict[str, float]
 
 class CadPrediction(BaseModel):
     prediction: str
@@ -26,5 +33,6 @@ class CadPrediction(BaseModel):
     model_version: str
     disclaimer: str = DEFAULT_DISCLAIMER
 
-class PredictData(CadPrediction):
-    artery_predictions: Dict[str, ArteryPrediction]
+class PredictData(BaseModel):
+    cad_prediction: Optional[CadPrediction] = None
+    artery_predictions: Optional[Dict[str, ArteryPrediction]] = None
