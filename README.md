@@ -221,7 +221,7 @@ Set these environment variables in Render (no committed `.env` file is needed):
 | `LOG_LEVEL` | `INFO` |
 | `ARTIFACTS_DIR` | `backend/app/ml/artifacts` |
 | `MAX_REQUEST_SIZE_BYTES` | `1048576` |
-| `CORS_ORIGINS` | `http://localhost:8080,https://id-preview--4711e78b-8b24-4fd5-9d46-b7e957db5cb3.lovable.app` |
+| `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:8080,https://id-preview--4711e78b-8b24-4fd5-9d46-b7e957db5cb3.lovable.app` |
 
 Render supplies `PORT` automatically. Use `/health/live` for process liveness
 and `/health` for model readiness. A successful server start alone does not

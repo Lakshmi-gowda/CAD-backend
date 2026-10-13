@@ -200,7 +200,11 @@ def cors_client(monkeypatch):
 
     settings = Settings(
         CORS_ORIGINS=(
-            "http://localhost:8080, "
+            "http://localhost:5173,"
+            "http://127.0.0.1:5173,"
+            "http://localhost:5174,"
+            "http://127.0.0.1:5174,"
+            "http://localhost:8080,"
             "https://id-preview--4711e78b-8b24-4fd5-9d46-b7e957db5cb3.lovable.app"
         )
     )
@@ -208,26 +212,36 @@ def cors_client(monkeypatch):
     return TestClient(main_module.create_app())
 
 @pytest.mark.parametrize(
-    "origin",
+    ("origin", "method"),
     [
-        "http://localhost:8080",
-        "https://id-preview--4711e78b-8b24-4fd5-9d46-b7e957db5cb3.lovable.app",
+        (origin, method)
+        for origin in [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "http://localhost:8080",
+            "https://id-preview--4711e78b-8b24-4fd5-9d46-b7e957db5cb3.lovable.app",
+        ]
+        for method in ["GET", "POST"]
     ],
 )
-def test_cors_preflight_allows_configured_origins(cors_client, origin):
+def test_cors_preflight_allows_configured_origins(cors_client, origin, method):
     requested_headers = "Content-Type, Authorization, X-Requested-With"
     response = cors_client.options(
         "/predict",
         headers={
             "Origin": origin,
-            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Method": method,
             "Access-Control-Request-Headers": requested_headers,
         },
     )
 
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") == origin
-    assert "POST" in response.headers["access-control-allow-methods"]
+    assert method in response.headers["access-control-allow-methods"]
+    assert "*" not in response.headers["access-control-allow-origin"]
+    assert "access-control-allow-credentials" not in response.headers
     allowed_headers = {
         header.strip().lower()
         for header in response.headers["access-control-allow-headers"].split(",")
@@ -257,6 +271,25 @@ def test_cors_origins_are_parsed_as_comma_separated_values():
         "https://one.example",
         "https://two.example",
     ]
+
+def test_cors_origins_default_to_local_and_existing_frontend_origins(monkeypatch):
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    settings = Settings(_env_file=None)
+
+    assert settings.cors_origins_list == [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:8080",
+        "https://id-preview--4711e78b-8b24-4fd5-9d46-b7e957db5cb3.lovable.app",
+    ]
+
+def test_cors_origins_read_from_environment(monkeypatch):
+    monkeypatch.setenv("CORS_ORIGINS", "https://frontend.example")
+    settings = Settings(_env_file=None)
+
+    assert settings.cors_origins_list == ["https://frontend.example"]
 
 # ==========================================
 # 4. Valid Predict Inference Tests

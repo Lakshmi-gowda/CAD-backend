@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     ARTIFACTS_DIR: str = "backend/app/ml/artifacts"
     CORS_ORIGINS: str = (
+        "http://localhost:5173,"
+        "http://127.0.0.1:5173,"
+        "http://localhost:5174,"
+        "http://127.0.0.1:5174,"
         "http://localhost:8080,"
         "https://id-preview--4711e78b-8b24-4fd5-9d46-b7e957db5cb3.lovable.app"
     )
